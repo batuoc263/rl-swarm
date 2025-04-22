@@ -1,223 +1,277 @@
 #!/bin/bash
 
-set -euo pipefail
-
-# General arguments
 ROOT=$PWD
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+PURPLE='\033[0;95m'
+BLUE='\033[0;94m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+print_step() {
+    echo -e "\n${CYAN}${BOLD}Step $1: $2${NC}"
+}
+
+check_success() {
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Success!${NC}"
+    else
+        echo -e "${RED}✗ Failed! Please check errors above and try again.${NC}"
+        exit 1
+    fi
+}
+
+# Export environment variables
 export PUB_MULTI_ADDRS
 export PEER_MULTI_ADDRS
 export HOST_MULTI_ADDRS
 export IDENTITY_PATH
-export CONNECT_TO_TESTNET
 export ORG_ID
-export HF_HUB_DOWNLOAD_TIMEOUT=120  # 2 minutes
-
-# Check if public multi-address is given else set to default
+export HF_HUB_DOWNLOAD_TIMEOUT=120
+export CPU_ONLY=1
+export CUDA_VISIBLE_DEVICES=""
+# Default swarm addrs
 DEFAULT_PUB_MULTI_ADDRS=""
 PUB_MULTI_ADDRS=${PUB_MULTI_ADDRS:-$DEFAULT_PUB_MULTI_ADDRS}
 
-# Check if peer multi-address is given else set to default
-DEFAULT_PEER_MULTI_ADDRS="/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ" # gensyn coordinator node
+DEFAULT_PEER_MULTI_ADDRS="/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
 PEER_MULTI_ADDRS=${PEER_MULTI_ADDRS:-$DEFAULT_PEER_MULTI_ADDRS}
 
-# Check if host multi-address is given else set to default
-DEFAULT_HOST_MULTI_ADDRS="/ip4/0.0.0.0/tcp/38331"
+DEFAULT_HOST_MULTI_ADDRS="/ip4/0.0.0.0/tcp/38332"
 HOST_MULTI_ADDRS=${HOST_MULTI_ADDRS:-$DEFAULT_HOST_MULTI_ADDRS}
 
-# Path to an RSA private key. If this path does not exist, a new key pair will be created.
-# Remove this file if you want a new PeerID.
 DEFAULT_IDENTITY_PATH="$ROOT"/swarm.pem
 IDENTITY_PATH=${IDENTITY_PATH:-$DEFAULT_IDENTITY_PATH}
 
-# Will ignore any visible GPUs if set.
-CPU_ONLY=${CPU_ONLY:-""}
+# We force frontend dev server to port 3003
+export PORT=3002
 
-# Set if successfully parsed from modal-login/temp-data/userData.json.
-ORG_ID=${ORG_ID:-""}
-
-GREEN_TEXT="\033[32m"
-BLUE_TEXT="\033[34m"
-RESET_TEXT="\033[0m"
-
-echo_green() {
-    echo -e "$GREEN_TEXT$1$RESET_TEXT"
-}
-
-echo_blue() {
-    echo -e "$BLUE_TEXT$1$RESET_TEXT"
-}
-
-ROOT_DIR="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
-
-# Function to clean up the server process upon exit
-cleanup() {
-    echo_green ">> Shutting down trainer..."
-
-    # Remove modal credentials if they exist
-    rm -r $ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
-
-    # Kill all processes belonging to this script's process group
-    kill -- -$$ || true
-
-    exit 0
-}
-
-trap cleanup EXIT
-
-echo -e "\033[38;5;224m"
-cat << "EOF"
-    ██████  ██            ███████ ██     ██  █████  ██████  ███    ███ 
-    ██   ██ ██            ██      ██     ██ ██   ██ ██   ██ ████  ████ 
-    ██████  ██      █████ ███████ ██  █  ██ ███████ ██████  ██ ████ ██ 
-    ██   ██ ██                 ██ ██ ███ ██ ██   ██ ██   ██ ██  ██  ██ 
-    ██   ██ ███████       ███████  ███ ███  ██   ██ ██   ██ ██      ██ 
-    
-    From Gensyn  
-                                                                
-EOF
-
-while true; do
-    echo -en $GREEN_TEXT
-    read -p ">> Would you like to connect to the Testnet? [Y/n] " yn
-    echo -en $RESET_TEXT
-    yn=${yn:-Y}  # Default to "Y" if the user presses Enter
-    case $yn in
-        [Yy]*)  CONNECT_TO_TESTNET=True && break ;;
-        [Nn]*)  CONNECT_TO_TESTNET=False && break ;;
-        *)  echo ">>> Please answer yes or no." ;;
-    esac
-done
-
-if [ "$CONNECT_TO_TESTNET" = "True" ]; then
-    # Run modal_login server.
-    echo "Please login to create an Ethereum Server Wallet"
+if [ -f "modal-login/temp-data/userData.json" ]; then
     cd modal-login
-    # Check if the yarn command exists; if not, install Yarn.
     source ~/.bashrc
 
-    # Node.js + NVM setup
-    if ! command -v node >/dev/null 2>&1; then
-        echo "Node.js not found. Installing NVM and latest Node.js..."
-        export NVM_DIR="$HOME/.nvm"
-        if [ ! -d "$NVM_DIR" ]; then
-            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-        fi
-        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-        [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-       nvm install node
-    else
-        echo "Node.js is already installed: $(node -v)"
+    # Install npm/node if missing
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${YELLOW}npm is not installed. Installing Node.js and npm...${NC}"
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        source ~/.bashrc
     fi
 
-    if ! command -v yarn > /dev/null 2>&1; then
-        # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
-        if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
-            echo "Detected Ubuntu or WSL Ubuntu. Installing Yarn via apt..."
-            curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
-            echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
-            sudo apt update && sudo apt install -y yarn
-        else
-            echo "Yarn is not installed. Installing Yarn..."
-            curl -o- -L https://yarnpkg.com/install.sh | sh
-            echo 'export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"' >> ~/.bashrc
-            source ~/.bashrc
-        fi
-    fi
-    yarn install
-    yarn dev > /dev/null 2>&1 & # Run in background and suppress output
+    echo -e "\n${CYAN}Installing dependencies with npm. This may take a few minutes...${NC}"
+    npm install --legacy-peer-deps
 
-    SERVER_PID=$!  # Store the process ID
-    echo "Started server process: $SERVER_PID"
-    sleep 5
-    
-    # Try to open the URL in the default browser
-    if open http://localhost:3000 2>/dev/null; then
-        echo_green ">> Successfully opened http://localhost:3000 in your default browser."
-    else
-        echo ">> Failed to open http://localhost:3000. Please open it manually."
+    echo -e "\n${CYAN}Starting the development server on port $PORT...${NC}"
+    npm run dev > server.log 2>&1 &
+    SERVER_PID=$!
+
+    # Wait up to 60s for server.log to report the port
+    MAX_WAIT=60; counter=0
+    while [ $counter -lt $MAX_WAIT ]; do
+        if grep -q "Local:        http://localhost:$PORT" server.log; then
+            echo -e "${GREEN}Server is running successfully on port $PORT${NC}"
+            break
+        fi
+        sleep 1; counter=$((counter+1))
+    done
+
+    if [ $counter -eq $MAX_WAIT ]; then
+        echo -e "${RED}Timeout waiting for server to start.${NC}"
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
     fi
-    
     cd ..
 
-    echo_green ">> Waiting for modal userData.json to be created..."
-    while [ ! -f "modal-login/temp-data/userData.json" ]; do
-        sleep 5  # Wait for 5 seconds before checking again
-    done
-    echo "Found userData.json. Proceeding..."
-
+    # Extract ORG_ID
     ORG_ID=$(awk 'BEGIN { FS = "\"" } !/^[ \t]*[{}]/ { print $(NF - 1); exit }' modal-login/temp-data/userData.json)
-    echo "Your ORG_ID is set to: $ORG_ID"
+    echo -e "${CYAN}ORG_ID has been set to: ${BOLD}$ORG_ID${NC}\n"
 
-    # Wait until the API key is activated by the client
-    echo "Waiting for API key to become activated..."
-    while true; do
-        STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
-        if [[ "$STATUS" == "activated" ]]; then
-            echo "API key is activated! Proceeding..."
+    # Cleanup on Ctrl+C
+    cleanup() {
+        echo -e "${YELLOW}Shutting down server...${NC}"
+        kill $SERVER_PID 2>/dev/null || true
+        exit 0
+    }
+    trap cleanup INT
+
+else
+    cd modal-login
+    source ~/.bashrc
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${YELLOW}npm is not installed. Installing Node.js and npm...${NC}"
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        source ~/.bashrc
+    fi
+
+    echo -e "\n${CYAN}Installing dependencies with npm. This may take a few minutes...${NC}"
+    npm install --legacy-peer-deps
+
+    echo -e "\n${CYAN}Starting the development server on port $PORT...${NC}"
+    npm run dev > server.log 2>&1 &
+    SERVER_PID=$!
+
+    MAX_WAIT=60; counter=0
+    while [ $counter -lt $MAX_WAIT ]; do
+        if grep -q "Local:        http://localhost:$PORT" server.log; then
+            echo -e "${GREEN}Server is running successfully on port $PORT.${NC}"
             break
-        else
-            echo "Waiting for API key to be activated..."
-            sleep 5
         fi
+        sleep 1; counter=$((counter+1))
     done
+
+    if [ $counter -eq $MAX_WAIT ]; then
+        echo -e "${RED}Timeout waiting for server to start.${NC}"
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+
+    # Bước 1: detect kiến trúc
+    print_step 1 "Detecting system architecture"
+    ARCH=$(uname -m)
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    if [ "$ARCH" = "x86_64" ]; then
+        NGROK_ARCH="amd64"; echo -e "${GREEN}Detected x86_64.${NC}"
+    elif [[ "$ARCH" =~ ^(arm64|aarch64)$ ]]; then
+        NGROK_ARCH="arm64"; echo -e "${GREEN}Detected ARM64.${NC}"
+    elif [[ "$ARCH" =~ ^arm ]]; then
+        NGROK_ARCH="arm"; echo -e "${GREEN}Detected ARM.${NC}"
+    else
+        echo -e "${RED}Unsupported architecture: $ARCH${NC}"
+        exit 1
+    fi
+
+    # Bước 2: tải & cài ngrok
+    print_step 2 "Downloading and installing ngrok"
+    echo -e "${YELLOW}Downloading ngrok for $OS-$NGROK_ARCH...${NC}"
+    wget -q --show-progress "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"
+    check_success
+    echo -e "${YELLOW}Extracting ngrok...${NC}"
+    tar -xzf "ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"; check_success
+    echo -e "${YELLOW}Moving ngrok to /usr/local/bin/...${NC}"
+    sudo mv ngrok /usr/local/bin/; check_success
+    rm "ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"; check_success
+
+    # Bước 3: authenticate ngrok
+    print_step 3 "Authenticating ngrok"
+    while true; do
+        echo -e "\n${YELLOW}Enter your ngrok authtoken (from https://dashboard.ngrok.com/get-started/your-authtoken):${NC}"
+        read -p "> " NGROK_TOKEN
+        [ -z "$NGROK_TOKEN" ] && echo -e "${RED}Token cannot be empty.${NC}" && continue
+        pkill -f ngrok || true; sleep 1
+        ngrok authtoken "$NGROK_TOKEN"
+        if [ $? -eq 0 ]; then echo -e "${GREEN}✓ Authenticated!${NC}"; break; fi
+        echo -e "${RED}Auth failed, try again.${NC}"
+    done
+
+    # Bước 4: chuẩn bị tunnel
+    print_step 4 "Preparing ngrok tunnel"
+    pkill -f ngrok || true; sleep 1
+    NGROK_WEB_PORT=4040
+    while lsof -i :$NGROK_WEB_PORT >/dev/null 2>&1; do
+        echo -e "${YELLOW}Port $NGROK_WEB_PORT busy, trying next...${NC}"
+        NGROK_WEB_PORT=$((NGROK_WEB_PORT+1))
+    done
+    echo -e "${GREEN}Will use ngrok web port $NGROK_WEB_PORT${NC}"
+
+    # Bước 5: start tunnel và lấy URL
+    print_step 5 "Starting ngrok tunnel on port $PORT"
+    ngrok http "$PORT" --log=stdout --log-format=json --log-level=info > ngrok_output.log 2>&1 &
+    NGROK_PID=$!; sleep 5
+
+    # Các phương pháp trích URL
+    get_url_from_method1() {
+        grep -o '"url":"https://[^"]*' ngrok_output.log | head -1 | cut -d'"' -f4
+    }
+    get_url_from_method2() {
+        curl -s "http://localhost:$NGROK_WEB_PORT/api/tunnels" \
+         | grep -o '"public_url":"https://[^"]*' | head -1 | cut -d'"' -f4
+    }
+    get_url_from_method3() {
+        grep -m1 "Forwarding" ngrok_output.log | grep -o "https://[^ ]*"
+    }
+    get_url_from_method4() {
+        kill $NGROK_PID 2>/dev/null || true; sleep 2
+        ngrok http --region us --log=stdout "$PORT" > ngrok_output_alt.log 2>&1 &
+        NGROK_PID=$!; sleep 10
+        local url=$(grep -o '"url":"https://[^"]*' ngrok_output_alt.log | head -1 | cut -d'"' -f4)
+        [ -z "$url" ] && url=$(curl -s "http://localhost:$NGROK_WEB_PORT/api/tunnels" \
+            | grep -o '"public_url":"https://[^"]*' | head -1 | cut -d'"' -f4)
+        echo "$url"
+    }
+
+    FORWARDING_URL=$(get_url_from_method1)
+    [ -z "$FORWARDING_URL" ] && FORWARDING_URL=$(get_url_from_method2)
+    [ -z "$FORWARDING_URL" ] && FORWARDING_URL=$(get_url_from_method3)
+    [ -z "$FORWARDING_URL" ] && FORWARDING_URL=$(get_url_from_method4)
+
+    if [ -n "$FORWARDING_URL" ]; then
+        echo -e "${GREEN}${BOLD}✓ Tunnel ready! Visit and log in:${NC} ${CYAN}${BOLD}$FORWARDING_URL${NC}"
+    else
+        echo -e "\n${BLUE}Failed to auto-fetch URL. Use SSH tunnel manually:${NC}"
+        echo "1. Run: ssh -L 3003:localhost:$PORT $(whoami)@$(curl -s ifconfig.me)"
+        echo "2. Then visit: http://localhost:3003/"
+        kill $NGROK_PID 2>/dev/null || true
+    fi
+
+    cd ..
+    echo -e "\n${CYAN}Waiting for login completion...${NC}"
+    while [ ! -f "modal-login/temp-data/userData.json" ]; do sleep 3; done
+    echo -e "${GREEN}${BOLD}✓ userData.json created. Continuing...${NC}"
+
+    ORG_ID=$(awk 'BEGIN { FS="\"" } !/^[ \t]*[{}]/ { print $(NF-1); exit }' modal-login/temp-data/userData.json)
+    echo -e "\n${CYAN}ORG_ID: ${BOLD}$ORG_ID${NC}\n"
+
+    cleanup() {
+        echo -e "${YELLOW}Shutting down server & ngrok...${NC}"
+        kill $SERVER_PID $NGROK_PID 2>/dev/null || true
+        exit 0
+    }
+    trap cleanup INT
 fi
 
-pip_install() {
-    pip install --disable-pip-version-check -q -r "$1"
-}
+# Python requirements
+echo -e "${CYAN}Installing Python packages...${NC}"
+pip install -q -r "$ROOT"/requirements-hivemind.txt
+pip install -q -r "$ROOT"/requirements.txt
 
-echo_green ">> Getting requirements..."
-pip_install "$ROOT"/requirements-hivemind.txt
-pip_install "$ROOT"/requirements.txt
+# Chọn config dựa trên GPU/CPU
 
-if ! command -v nvidia-smi &> /dev/null; then
-    # You don't have a NVIDIA GPU
-    CONFIG_PATH="$ROOT/hivemind_exp/configs/mac/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
-elif [ -n "$CPU_ONLY" ]; then
-    # ... or we don't want to use it
-    CONFIG_PATH="$ROOT/hivemind_exp/configs/mac/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
-else
-    # NVIDIA GPU found
-    pip_install "$ROOT"/requirements_gpu.txt
-    CONFIG_PATH="$ROOT/hivemind_exp/configs/gpu/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
-fi
+CONFIG_PATH="$ROOT/hivemind_exp/configs/mac/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
 
-echo_green ">> Done!"
+echo -e "${GREEN}>>> All packages installed successfully!${NC}"
 
-HF_TOKEN=${HF_TOKEN:-""}
-if [ -n "${HF_TOKEN}" ]; then # Check if HF_TOKEN is already set and use if so. Else give user a prompt to choose.
-    HUGGINGFACE_ACCESS_TOKEN=${HF_TOKEN}
-else
-    echo -en $GREEN_TEXT
-    read -p ">> Would you like to push models you train in the RL swarm to the Hugging Face Hub? [y/N] " yn
-    echo -en $RESET_TEXT
-    yn=${yn:-N} # Default to "N" if the user presses Enter
-    case $yn in
-        [Yy]*) read -p "Enter your Hugging Face access token: " HUGGINGFACE_ACCESS_TOKEN ;;
-        [Nn]*) HUGGINGFACE_ACCESS_TOKEN="None" ;;
-        *) echo ">>> No answer was given, so NO models will be pushed to Hugging Face Hub" && HUGGINGFACE_ACCESS_TOKEN="None" ;;
-    esac
-fi
 
-echo_green ">> Good luck in the swarm!"
-echo_blue ">> Post about rl-swarm on X/twitter! --> https://tinyurl.com/swarmtweet"
-echo_blue ">> And remember to star the repo on GitHub! --> https://github.com/gensyn-ai/rl-swarm"
+echo -e "\n${GREEN}${BOLD}Good luck in the swarm! Starting training now.${NC}\n"
 
-if [ -n "$ORG_ID" ]; then
-    python -m hivemind_exp.gsm8k.train_single_gpu \
-        --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
-        --identity_path "$IDENTITY_PATH" \
-        --modal_org_id "$ORG_ID" \
-        --config "$CONFIG_PATH"
-else
-    python -m hivemind_exp.gsm8k.train_single_gpu \
-        --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
-        --identity_path "$IDENTITY_PATH" \
-        --public_maddr "$PUB_MULTI_ADDRS" \
-        --initial_peers "$PEER_MULTI_ADDRS" \
-        --host_maddr "$HOST_MULTI_ADDRS" \
-        --config "$CONFIG_PATH"
-fi
-
-wait  # Keep script running until Ctrl+C
+while true; do
+    # Chạy script Python
+    if [ -n "$ORG_ID" ]; then
+        python3 -m hivemind_exp.gsm8k.train_single_gpu \
+            --identity_path "$IDENTITY_PATH" \
+            --modal_org_id "$ORG_ID" \
+            --config "$CONFIG_PATH"
+    else
+        python3 -m hivemind_exp.gsm8k.train_single_gpu \
+            --identity_path "$IDENTITY_PATH" \
+            --public_maddr "$PUB_MULTI_ADDRS" \
+            --initial_peers "$PEER_MULTI_ADDRS" \
+            --host_maddr "$HOST_MULTI_ADDRS" \
+            --config "$CONFIG_PATH"
+    fi
+    
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo -e "\nTraining completed successfully. Exiting."
+        break
+    else
+        echo -e "\nScript crashed with exit code $EXIT_CODE."
+        echo "Restarting in 5 seconds..."
+        sleep 5
+    fi
+done
+wait
