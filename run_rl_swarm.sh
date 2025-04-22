@@ -158,55 +158,16 @@ else
         exit 1
     fi
 
-    install_cloudflared() {
-        if command -v cloudflared >/dev/null 2>&1; then
-            echo -e "${GREEN}${BOLD}[✓] Cloudflared is already installed.${NC}"
-            return 0
-        fi
-        echo -e "\n${YELLOW}${BOLD}[✓] Installing cloudflared...${NC}"
-        CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
-        wget -q --show-progress "$CF_URL" -O cloudflared
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${BOLD}[✗] Failed to download cloudflared.${NC}"
-            return 1
-        fi
-        chmod +x cloudflared
-        sudo mv cloudflared /usr/local/bin/
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${BOLD}[✗] Failed to move cloudflared to /usr/local/bin/.${NC}"
-            return 1
-        fi
-        echo -e "${GREEN}${BOLD}[✓] Cloudflared installed successfully.${NC}"
-        return 0
-    }
-
     install_ngrok() {
-        if command -v ngrok >/dev/null 2>&1; then
-            echo -e "${GREEN}${BOLD}[✓] ngrok is already installed.${NC}"
-            return 0
-        fi
-        echo -e "${YELLOW}${BOLD}[✓] Installing ngrok...${NC}"
-        NGROK_URL="https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"
-        wget -q --show-progress "$NGROK_URL" -O ngrok.tgz
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${BOLD}[✗] Failed to download ngrok.${NC}"
-            return 1
-        fi
-        tar -xzf ngrok.tgz
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${BOLD}[✗] Failed to extract ngrok.${NC}"
-            rm ngrok.tgz
-            return 1
-        fi
-        sudo mv ngrok /usr/local/bin/
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${BOLD}[✗] Failed to move ngrok to /usr/local/bin/.${NC}"
-            rm ngrok.tgz
-            return 1
-        fi
-        rm ngrok.tgz
-        echo -e "${GREEN}${BOLD}[✓] ngrok installed successfully.${NC}"
-        return 0
+        print_step 2 "Downloading and installing ngrok"
+        echo -e "${YELLOW}Downloading ngrok for $OS-$NGROK_ARCH...${NC}"
+        wget -q --show-progress "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"
+        check_success
+        echo -e "${YELLOW}Extracting ngrok...${NC}"
+        tar -xzf "ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"; check_success
+        echo -e "${YELLOW}Moving ngrok to /usr/local/bin/...${NC}"
+        sudo mv ngrok /usr/local/bin/; check_success
+        rm "ngrok-v3-stable-$OS-$NGROK_ARCH.tgz"; check_success
     }
 
     get_url_from_method1() {
